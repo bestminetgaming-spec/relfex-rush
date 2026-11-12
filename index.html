@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reflex Rush</title>
+<style>
+  :root { color-scheme: dark; --lime:#b7f34a; --cyan:#55d9ff; --panel:#111b2d; }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; min-height:100vh; display:grid; place-items:center; padding:20px;
+    font-family:Arial,Helvetica,sans-serif; color:#f4f7fb;
+    background:radial-gradient(circle at top,#1c3150 0,#0a1020 60%,#070b14 100%);
+  }
+  .game-wrap { width:min(100%,760px); }
+  header { display:flex; justify-content:space-between; align-items:end; gap:16px; margin-bottom:14px; }
+  h1 { margin:0; font-size:clamp(2rem,6vw,3.2rem); letter-spacing:2px; }
+  h1 span { color:var(--lime); }
+  .tagline { color:#a9b8ca; margin:6px 0 0; font-size:.95rem; }
+  .stats { display:flex; gap:10px; }
+  .stat { background:var(--panel); border:1px solid #2b3b55; border-radius:12px; padding:9px 14px; min-width:82px; text-align:center; }
+  .stat small { display:block; color:#9eafc4; text-transform:uppercase; font-size:.65rem; letter-spacing:1px; }
+  .stat strong { font-size:1.3rem; }
+  .board { position:relative; border:2px solid #314764; border-radius:18px; overflow:hidden; background:#091323; box-shadow:0 18px 55px #0008; }
+  canvas { display:block; width:100%; height:auto; touch-action:none; }
+  .overlay { position:absolute; inset:0; display:grid; place-items:center; padding:22px; text-align:center; background:#07101bdc; }
+  .overlay.hidden { display:none; }
+  .modal { max-width:390px; }
+  .modal h2 { margin:0 0 10px; font-size:2rem; }
+  .modal p { color:#b8c6d8; line-height:1.5; }
+  button { border:0; border-radius:999px; padding:13px 25px; font-weight:800; letter-spacing:.5px; color:#101827; background:var(--lime); cursor:pointer; font-size:1rem; }
+  button:hover { filter:brightness(1.08); transform:translateY(-1px); }
+  .help { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; color:#9eafc4; font-size:.85rem; margin-top:13px; }
+  kbd { background:#1a2940; border:1px solid #40516b; border-radius:5px; padding:2px 6px; color:#e8eef6; }
+  @media(max-width:520px) { header { align-items:start; flex-direction:column; } .stats { width:100%; } .stat { flex:1; } }
+</style>
+</head>
+<body>
+<main class="game-wrap">
+  <header>
+    <div>
+      <h1>REFLEX <span>RUSH</span></h1>
+      <p class="tagline">Catch the energy. Dodge the hazards. Beat your high score.</p>
+    </div>
+    <div class="stats">
+      <div class="stat"><small>Score</small><strong id="score">0</strong></div>
+      <div class="stat"><small>Lives</small><strong id="lives">3</strong></div>
+      <div class="stat"><small>Best</small><strong id="best">0</strong></div>
+    </div>
+  </header>
+  <section class="board">
+    <canvas id="game" width="720" height="460" aria-label="Reflex Rush game area"></canvas>
+    <div class="overlay" id="overlay">
+      <div class="modal">
+        <h2 id="overlayTitle">Ready to rush?</h2>
+        <p id="overlayText">Move your player to catch the glowing energy orbs. Avoid the red hazards. You have 3 lives!</p>
+        <button id="startBtn">START GAME</button>
+      </div>
+    </div>
+  </section>
+  <div class="help">
+    <span>Move: <kbd>←</kbd> <kbd>→</kbd> or <kbd>A</kbd> <kbd>D</kbd></span>
+    <span>Mobile: drag your finger across the game</span>
+    <span>Every 10 points, things get faster!</span>
+  </div>
+</main>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+  const bestEl = document.getElementById('best');
+  const overlay = document.getElementById('overlay');
+  const titleEl = document.getElementById('overlayTitle');
+  const textEl = document.getElementById('overlayText');
+  const startBtn = document.getElementById('startBtn');
+  const W = canvas.width, H = canvas.height;
+  let player, drops, particles, score, lives, running, keys, spawnTimer, lastTime, best;
+  best = Number(localStorage.getItem('reflexRushBest') || 0);
+  bestEl.textContent = best;
+  keys = {};
+  const rand = (a,b) => Math.random()*(b-a)+a;
+
+  function reset() {
+    player = { x: W/2, y: H-48, w: 94, h: 18, speed: 430 };
+    drops = []; particles = []; score = 0; lives = 3; spawnTimer = 0;
+    scoreEl.textContent = score; livesEl.textContent = lives;
+  }
+  function start() {
+    reset(); running = true; lastTime = performance.now();
+    overlay.classList.add('hidden');
+    requestAnimationFrame(loop);
+  }
+  function endGame() {
+    running = false;
+    if (score > best) {
+      best = score; localStorage.setItem('reflexRushBest', best); bestEl.textContent = best;
+    }
+    titleEl.textContent = 'Game over!';
+    textEl.textContent = `You scored ${score}. ${score >= best ? 'New personal best!' : 'Think you can beat it?'}`;
+    startBtn.textContent = 'PLAY AGAIN';
+    overlay.classList.remove('hidden');
+  }
+  function spawn() {
+    const hazard = Math.random() < 0.30;
+    drops.push({ x:rand(20,W-20), y:-20, r:hazard?13:11, vy:rand(145,210)+score*2.2, hazard, phase:rand(0,6.28) });
+  }
+  function burst(x,y,color) {
+    for(let i=0;i<10;i++) particles.push({x,y,vx:rand(-130,130),vy:rand(-150,80),life:.45,color});
+  }
+  function update(dt) {
+    if(keys.ArrowLeft || keys.a || keys.A) player.x -= player.speed*dt;
+    if(keys.ArrowRight || keys.d || keys.D) player.x += player.speed*dt;
+    player.x = Math.max(player.w/2+5, Math.min(W-player.w/2-5, player.x));
+    spawnTimer -= dt;
+    if(spawnTimer <= 0) { spawn(); spawnTimer = Math.max(.28,.82-score*.012); }
+    for(let i=drops.length-1;i>=0;i--) {
+      const d=drops[i]; d.y += d.vy*dt; d.phase += dt*5;
+      if(d.y+d.r >= player.y-player.h/2 && d.y-d.r <= player.y+player.h/2 &&
+         Math.abs(d.x-player.x) < player.w/2+d.r*.55) {
+        if(d.hazard) { lives--; livesEl.textContent=lives; burst(d.x,d.y,'#ff5577'); }
+        else { score += 1; scoreEl.textContent=score; burst(d.x,d.y,'#b7f34a'); }
+        drops.splice(i,1);
+        if(lives<=0) { endGame(); return; }
+      } else if(d.y-d.r > H) {
+        if(!d.hazard) { lives--; livesEl.textContent=lives; }
+        drops.splice(i,1);
+        if(lives<=0) { endGame(); return; }
+      }
+    }
+    for(let i=particles.length-1;i>=0;i--) {
+      const p=particles[i]; p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=280*dt; p.life-=dt;
+      if(p.life<=0) particles.splice(i,1);
+    }
+  }
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+    const grad=ctx.createLinearGradient(0,0,0,H); grad.addColorStop(0,'#0b1b30'); grad.addColorStop(1,'#08101d');
+    ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='#ffffff0b'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    // player paddle
+    ctx.shadowBlur=22; ctx.shadowColor='#55d9ff';
+    ctx.fillStyle='#55d9ff'; ctx.beginPath(); ctx.roundRect(player.x-player.w/2,player.y-player.h/2,player.w,player.h,9); ctx.fill();
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#d9f8ff'; ctx.fillRect(player.x-17,player.y-2,34,4);
+    // falling objects
+    for(const d of drops) {
+      ctx.save(); ctx.translate(d.x,d.y);
+      if(d.hazard) {
+        ctx.rotate(d.phase*.25); ctx.shadowBlur=17; ctx.shadowColor='#ff5577'; ctx.fillStyle='#ff5577';
+        ctx.beginPath(); for(let n=0;n<8;n++){let a=n*Math.PI/4;let r=n%2?d.r*.62:d.r;ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);} ctx.closePath();ctx.fill();
+      } else {
+        ctx.shadowBlur=20;ctx.shadowColor='#b7f34a';ctx.fillStyle='#b7f34a';ctx.beginPath();ctx.arc(0,0,d.r,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle='#f4ffd8';ctx.beginPath();ctx.arc(-3,-3,3,0,Math.PI*2);ctx.fill();
+      }
+      ctx.restore();
+    }
+    for(const p of particles){ctx.globalAlpha=Math.max(0,p.life/.45);ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();}
+    ctx.globalAlpha=1;
+    ctx.fillStyle='#8da2bb';ctx.font='12px Arial';ctx.fillText('ENERGY +1',18,24);
+    ctx.fillStyle='#b7f34a';ctx.fillText('●',94,24);
+    ctx.fillStyle='#8da2bb';ctx.fillText('HAZARD',W-82,24);
+    ctx.fillStyle='#ff5577';ctx.fillText('✦',W-20,24);
+  }
+  function loop(now) {
+    if(!running) return;
+    const dt=Math.min((now-lastTime)/1000,.033); lastTime=now;
+    update(dt); draw();
+    if(running) requestAnimationFrame(loop);
+  }
+  document.addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();});
+  document.addEventListener('keyup',e=>keys[e.key]=false);
+  function moveFromPointer(e) {
+    const rect=canvas.getBoundingClientRect();
+    const scale=W/rect.width;
+    player.x=Math.max(player.w/2+5,Math.min(W-player.w/2-5,(e.clientX-rect.left)*scale));
+  }
+  canvas.addEventListener('pointerdown',e=>{if(running)moveFromPointer(e);});
+  canvas.addEventListener('pointermove',e=>{if(running && e.buttons)moveFromPointer(e);});
+  startBtn.addEventListener('click',start);
+  reset(); draw();
+})();
+</script>
+</body>
+</html>
